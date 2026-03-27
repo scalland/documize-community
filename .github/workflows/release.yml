@@ -50,21 +50,17 @@ jobs:
         with:
           node-version: '16'
 
-      # 6. Install Ember CLI globally
-      - name: Install Ember CLI
-        run: npm install -g ember-cli
-
-      # 7. Install frontend dependencies
+      # 6. Install frontend dependencies
       - name: Install frontend dependencies
         working-directory: gui
         run: npm --network-timeout=100000 install
 
-      # 8. Build Ember frontend for production
+      # 7. Build Ember frontend for production
       - name: Build Ember frontend
         working-directory: gui
-        run: ember build --environment=production --output-path dist-prod --suppress-sizes true
+        run: npx ember build --environment=production --output-path dist-prod --suppress-sizes true
 
-      # 9. Copy static assets (replicating build.sh logic)
+      # 8. Copy static assets (replicating build.sh logic)
       - name: Copy static assets
         run: |
           rm -rf edition/static/public
@@ -102,20 +98,20 @@ jobs:
           mkdir -p edition/static/onboard
           cp -r domain/onboard/*.json edition/static/onboard
 
-      # 10. Set up Go
+      # 9. Set up Go
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache: false
 
-      # 11. Build Go binary for linux-amd64
+      # 10. Build Go binary for linux-amd64
       - name: Build linux-amd64 binary
         run: |
           mkdir -p bin
           env GOOS=linux GOARCH=amd64 go build -mod=vendor -trimpath -o bin/documize-community-linux-amd64 ./edition/community.go
 
-      # 12. Generate release notes
+      # 11. Generate release notes
       - name: Generate release notes
         id: release_notes
         run: |
@@ -143,7 +139,7 @@ jobs:
           echo "### Assets" >> release_notes.md
           echo "- \`documize-community-linux-amd64\` — Linux AMD64 binary" >> release_notes.md
 
-      # 13. Create GitHub Release
+      # 12. Create GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
