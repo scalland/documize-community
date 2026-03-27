@@ -1,0 +1,158 @@
+name: Build & Release Latest Tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the repo with full history and all tags
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # 2. Determine the latest semver tag
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          # Get all version tags sorted by semver, pick the latest
+          LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::No version tags found (expected tags like v5.14.0)"
+            exit 1
+          fi
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $LATEST_TAG"
+
+      # 3. Get the previous tag (for release notes)
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git tag --list 'v*' --sort=-version:refname | sed -n '2p')
+          echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+          echo "Previous tag: $PREV_TAG"
+
+      # 4. Checkout the latest tag
+      - name: Checkout latest tag
+        run: |
+          git checkout ${{ steps.latest_tag.outputs.tag }}
+
+      # 5. Set up Node.js 16 for Ember build
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+
+      # 6. Install Ember CLI globally
+      - name: Install Ember CLI
+        run: npm install -g ember-cli
+
+      # 7. Install frontend dependencies
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm --network-timeout=100000 install
+
+      # 8. Build Ember frontend for production
+      - name: Build Ember frontend
+        working-directory: gui
+        run: ember build --environment=production --output-path dist-prod --suppress-sizes true
+
+      # 9. Copy static assets (replicating build.sh logic)
+      - name: Copy static assets
+        run: |
+          rm -rf edition/static/public
+          mkdir -p edition/static/public
+
+          cp -r gui/dist-prod/assets edition/static/public
+          cp -r gui/dist-prod/codemirror edition/static/public/codemirror
+          cp -r gui/dist-prod/prism edition/static/public/prism
+          cp -r gui/dist-prod/sections edition/static/public/sections
+          cp -r gui/dist-prod/tinymce edition/static/public/tinymce
+          cp -r gui/dist-prod/pdfjs edition/static/public/pdfjs
+          cp -r gui/dist-prod/i18n edition/static/public/i18n
+          cp gui/dist-prod/*.* edition/static
+          cp gui/dist-prod/favicon.ico edition/static/public || true
+          cp gui/dist-prod/manifest.json edition/static/public || true
+
+          rm -rf edition/static/mail
+          mkdir -p edition/static/mail
+          cp domain/mail/*.html edition/static/mail
+          cp core/database/templates/*.html edition/static
+
+          rm -rf edition/static/i18n
+          mkdir -p edition/static/i18n
+          cp -r gui/dist-prod/i18n/*.json edition/static/i18n
+
+          rm -rf edition/static/scripts
+          mkdir -p edition/static/scripts/mysql
+          mkdir -p edition/static/scripts/postgresql
+          mkdir -p edition/static/scripts/sqlserver
+          cp -r core/database/scripts/mysql/*.sql edition/static/scripts/mysql
+          cp -r core/database/scripts/postgresql/*.sql edition/static/scripts/postgresql
+          cp -r core/database/scripts/sqlserver/*.sql edition/static/scripts/sqlserver
+
+          rm -rf edition/static/onboard
+          mkdir -p edition/static/onboard
+          cp -r domain/onboard/*.json edition/static/onboard
+
+      # 10. Set up Go
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+
+      # 11. Build Go binary for linux-amd64
+      - name: Build linux-amd64 binary
+        run: |
+          mkdir -p bin
+          env GOOS=linux GOARCH=amd64 go build -mod=vendor -trimpath -o bin/documize-community-linux-amd64 ./edition/community.go
+
+      # 12. Generate release notes
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+          PREV_TAG="${{ steps.prev_tag.outputs.prev_tag }}"
+
+          echo "## Documize Community $TAG" > release_notes.md
+          echo "" >> release_notes.md
+          echo "### Build Information" >> release_notes.md
+          echo "- **Tag:** $TAG" >> release_notes.md
+          echo "- **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> release_notes.md
+          echo "- **Platform:** linux-amd64" >> release_notes.md
+          echo "" >> release_notes.md
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "### Changes since $PREV_TAG" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --pretty=format:"- %s (%h)" "$PREV_TAG".."$TAG" >> release_notes.md
+            echo "" >> release_notes.md
+          else
+            echo "### Initial Release" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+
+          echo "### Assets" >> release_notes.md
+          echo "- \`documize-community-linux-amd64\` — Linux AMD64 binary" >> release_notes.md
+
+      # 13. Create GitHub Release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.latest_tag.outputs.tag }}
+          name: "Documize Community ${{ steps.latest_tag.outputs.tag }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            bin/documize-community-linux-amd64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
