@@ -58,6 +58,8 @@ jobs:
       # 7. Build Ember frontend for production
       - name: Build Ember frontend
         working-directory: gui
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
         run: npx ember build --environment=production --output-path dist-prod --suppress-sizes true
 
       # 8. Copy static assets (replicating build.sh logic)
